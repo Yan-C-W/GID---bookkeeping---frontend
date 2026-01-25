@@ -6,19 +6,24 @@ const env = {
 };
 
 function withAuth(headers = {}) {
+  // 如果调用方传了非对象（例如 null / ""），强制纠正
+  const safeHeaders =
+    headers && typeof headers === "object" && !Array.isArray(headers) ? headers : {};
+
   const out = {
     ...(env.API_KEY ? { "X-API-KEY": env.API_KEY } : {}),
-    ...headers,
+    ...safeHeaders,
   };
 
-  // 过滤掉空 key 或非字符串 key（防止出现 {"": "..."}）
+  // 彻底清除非法 header 名称（空字符串/空白）
   for (const k of Object.keys(out)) {
-    if (!k || typeof k !== "string" || !k.trim()) {
+    if (typeof k !== "string" || k.trim() === "") {
       delete out[k];
     }
   }
   return out;
 }
+
 
 
 /** 发送银行对账 + 发票（multipart）到 n8n */
