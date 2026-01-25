@@ -6,11 +6,20 @@ const env = {
 };
 
 function withAuth(headers = {}) {
-  return {
+  const out = {
     ...(env.API_KEY ? { "X-API-KEY": env.API_KEY } : {}),
     ...headers,
   };
+
+  // 过滤掉空 key 或非字符串 key（防止出现 {"": "..."}）
+  for (const k of Object.keys(out)) {
+    if (!k || typeof k !== "string" || !k.trim()) {
+      delete out[k];
+    }
+  }
+  return out;
 }
+
 
 /** 发送银行对账 + 发票（multipart）到 n8n */
 export async function reconcile({
@@ -19,6 +28,7 @@ export async function reconcile({
   period,
   periodOption,
   emails = [],
+
 }) {
   if (!env.PROCESS_URL) throw new Error("Missing VITE_N8N_WEBHOOK_URL");
 
