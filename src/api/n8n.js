@@ -6,8 +6,10 @@ const env = {
 };
 
 function withAuth(headers = {}) {
-  if (env.API_KEY) headers["X-API-KEY"] = env.API_KEY;
-  return headers;
+  return {
+    ...(env.API_KEY ? { "X-API-KEY": env.API_KEY } : {}),
+    ...headers,
+  };
 }
 
 /** 发送银行对账 + 发票（multipart）到 n8n */
