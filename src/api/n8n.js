@@ -8,7 +8,9 @@ const env = {
 function withAuth(headers = {}) {
   // 如果调用方传了非对象（例如 null / ""），强制纠正
   const safeHeaders =
-    headers && typeof headers === "object" && !Array.isArray(headers) ? headers : {};
+    headers && typeof headers === "object" && !Array.isArray(headers)
+      ? headers
+      : {};
 
   const out = {
     ...(env.API_KEY ? { "X-API-KEY": env.API_KEY } : {}),
@@ -24,8 +26,6 @@ function withAuth(headers = {}) {
   return out;
 }
 
-
-
 /** 发送银行对账 + 发票（multipart）到 n8n */
 export async function reconcile({
   bankFile,
@@ -33,7 +33,6 @@ export async function reconcile({
   period,
   periodOption,
   emails = [],
-
 }) {
   if (!env.PROCESS_URL) throw new Error("Missing VITE_N8N_WEBHOOK_URL");
 
