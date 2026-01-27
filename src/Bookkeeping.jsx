@@ -1,12 +1,4 @@
-﻿function n8nHeaders(extra = {}) {
-  const apiKey = import.meta.env.VITE_N8N_API_KEY;
-  return {
-    ...(apiKey ? { "X-API-KEY": apiKey } : {}),
-    ...extra,
-  };
-}
-
-import React, { useState, useEffect, useRef } from "react";
+﻿import React, { useState, useEffect, useRef } from "react";
 import {
   Upload,
   FileText,
@@ -29,10 +21,7 @@ import {
   Plus,
 } from "lucide-react";
 import * as XLSX from "xlsx";
-import { reconcile, triggerAction, uploadInvoice  } from "./api/n8n";
-
-
-
+import { reconcile, triggerAction, uploadInvoice } from "./api/n8n";
 
 const BookkeepingSaaS = () => {
   const [currentStep, setCurrentStep] = useState(1);
@@ -69,7 +58,6 @@ const BookkeepingSaaS = () => {
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [currentPage, setCurrentPage] = useState("main"); // 'main' or 'profile'
   const [emailRequestSent, setEmailRequestSent] = useState(false);
-  
 
   // ---- helpers: format date & money (DD/MM/YYYY) ----
   const formatDate = (value) => {
@@ -362,6 +350,10 @@ const BookkeepingSaaS = () => {
       const matches = data?.matches ?? data?.[0]?.matches ?? [];
       //.filter((m) => m.id >= 0 && m.id <= 25 // 只保留 ID 0-30 的记录，过滤掉测试数据);
 
+      setSessionId(
+        data?.sessionId || data?.executionId || data?.requestId || null,
+      );
+
       setMatchingResults({ matches });
 
       // 黄色/红色生成 Action 卡片（若后端无 actions 字段）
@@ -623,7 +615,7 @@ const BookkeepingSaaS = () => {
           const uploadRes = await uploadInvoice({
             file,
             sessionId,
-            transactionId,
+            transactionId: matchId,
           });
 
           const storedName = uploadRes?.stored?.name || file.name;
@@ -632,7 +624,7 @@ const BookkeepingSaaS = () => {
           await runAction({
             type: "UPLOAD_INVOICE",
             targetId: matchId,
-            fileName: storedName
+            fileName: storedName,
           });
           setUploadedFiles((p) => ({ ...p, [matchId]: file.name }));
         } catch (err) {
@@ -842,11 +834,11 @@ const BookkeepingSaaS = () => {
       const input = document.createElement("input");
       input.type = "file";
       input.accept = ".pdf,.jpg,.jpeg,.png";
-      input.onchange = (e) => {
+      async (e) => {
         const file = e.target.files[0];
-        if (！file) return;
-        
-        try{
+        if (!file) return;
+
+        try {
           const uploadRes = await uploadInvoice({
             file,
             sessionId,
@@ -861,9 +853,8 @@ const BookkeepingSaaS = () => {
             targetId: item.id,
             fileName: storedName,
             ...(storedFileId ? { fileId: storedFileId } : {}),
-          }); 
-          
-        }catch(err){
+          });
+        } catch (err) {
           alert(err?.message || String(err));
         } finally {
           input.value = "";
