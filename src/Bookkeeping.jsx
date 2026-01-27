@@ -1,4 +1,12 @@
-﻿import React, { useState, useEffect, useRef } from "react";
+﻿function n8nHeaders(extra = {}) {
+  const apiKey = import.meta.env.VITE_N8N_API_KEY;
+  return {
+    ...(apiKey ? { "X-API-KEY": apiKey } : {}),
+    ...extra,
+  };
+}
+
+import React, { useState, useEffect, useRef } from "react";
 import {
   Upload,
   FileText,
@@ -21,7 +29,10 @@ import {
   Plus,
 } from "lucide-react";
 import * as XLSX from "xlsx";
-import { reconcile, triggerAction } from "./api/n8n";
+import { reconcile, triggerAction, uploadInvoice  } from "./api/n8n";
+
+
+
 
 const BookkeepingSaaS = () => {
   const [currentStep, setCurrentStep] = useState(1);
@@ -29,6 +40,7 @@ const BookkeepingSaaS = () => {
   const [invoices, setInvoices] = useState([]);
   const [emailInvoices, setEmailInvoices] = useState([]);
   const [matchingResults, setMatchingResults] = useState(null);
+  const [sessionId, setSessionId] = useState(null);
   const [actionItems, setActionItems] = useState([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [showSkipModal, setShowSkipModal] = useState(false);
@@ -57,6 +69,7 @@ const BookkeepingSaaS = () => {
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [currentPage, setCurrentPage] = useState("main"); // 'main' or 'profile'
   const [emailRequestSent, setEmailRequestSent] = useState(false);
+  
 
   // ---- helpers: format date & money (DD/MM/YYYY) ----
   const formatDate = (value) => {
@@ -132,7 +145,7 @@ const BookkeepingSaaS = () => {
     // Generate Excel file and download
     XLSX.writeFile(
       wb,
-      `BookkeepingMatches_${new Date().toISOString().split("T")[0]}.xlsx`
+      `BookkeepingMatches_${new Date().toISOString().split("T")[0]}.xlsx`,
     );
   };
 
@@ -368,7 +381,7 @@ const BookkeepingSaaS = () => {
         }));
 
       setActionItems(
-        Array.isArray(data?.actions) ? data.actions : derivedActions
+        Array.isArray(data?.actions) ? data.actions : derivedActions,
       );
       setCurrentStep(4);
     } catch (error) {
@@ -420,7 +433,7 @@ const BookkeepingSaaS = () => {
               (_, i) =>
                 new File([`invoice${i}`], `Invoice_from_email_${i + 1}.pdf`, {
                   type: "application/pdf",
-                })
+                }),
             );
             setEmailInvoices(foundInvoices);
           }
@@ -494,8 +507,8 @@ const BookkeepingSaaS = () => {
                     isCompleted
                       ? "bg-blue-600"
                       : isCurrent
-                      ? "bg-white border-2 border-blue-600 shadow-sm"
-                      : "bg-white border-2 border-gray-300"
+                        ? "bg-white border-2 border-blue-600 shadow-sm"
+                        : "bg-white border-2 border-gray-300"
                   }`}
                 >
                   {isCompleted ? (
@@ -600,17 +613,26 @@ const BookkeepingSaaS = () => {
           matches: prevResults.matches.map((m) =>
             m.id === matchId
               ? { ...m, status: "green", fileName: file.name }
-              : m
+              : m,
           ),
         }));
         setActionItems((prevItems) =>
-          prevItems.filter((it) => it.id !== matchId)
+          prevItems.filter((it) => it.id !== matchId),
         );
         try {
+          const uploadRes = await uploadInvoice({
+            file,
+            sessionId,
+            transactionId,
+          });
+
+          const storedName = uploadRes?.stored?.name || file.name;
+          // const storedFileId = uploadRes?.stored?.fileId || null; // 可选：你后端 action 支持的话再传
+
           await runAction({
             type: "UPLOAD_INVOICE",
             targetId: matchId,
-            fileName: file.name,
+            fileName: storedName
           });
           setUploadedFiles((p) => ({ ...p, [matchId]: file.name }));
         } catch (err) {
@@ -671,8 +693,8 @@ const BookkeepingSaaS = () => {
                       match.status === "green"
                         ? "bg-green-50 hover:bg-green-100"
                         : match.status === "yellow"
-                        ? "bg-yellow-50 hover:bg-yellow-100"
-                        : "bg-red-50 hover:bg-red-100"
+                          ? "bg-yellow-50 hover:bg-yellow-100"
+                          : "bg-red-50 hover:bg-red-100"
                     }
                   `}
                 >
@@ -726,7 +748,7 @@ const BookkeepingSaaS = () => {
                         onClick={() =>
                           alert(
                             "In a real app, this would open a file preview for: " +
-                              match.fileName
+                              match.fileName,
                           )
                         }
                       >
@@ -768,7 +790,7 @@ const BookkeepingSaaS = () => {
                         onClick={() => {
                           setCurrentNoteId(match.id);
                           setTempNoteText(
-                            transactionNotes?.[String(match.id)] || ""
+                            transactionNotes?.[String(match.id)] || "",
                           );
                           setNoteDialogOpen(true);
                         }}
@@ -822,18 +844,29 @@ const BookkeepingSaaS = () => {
       input.accept = ".pdf,.jpg,.jpeg,.png";
       input.onchange = (e) => {
         const file = e.target.files[0];
-        if (file) {
-          // In a real app, this would upload the file and update the transaction
-          alert(
-            `Invoice "${
-              file.name
-            }" uploaded for transaction:\nPayee: ${item.description
-              .split("\n")[0]
-              .replace("Payee: ", "")}\nAmount: ${item.description
-              .split("\n")[2]
-              .replace("Amount: ", "")}`
-          );
-          // Here you would typically update the state to mark this item as resolved
+        if (！file) return;
+        
+        try{
+          const uploadRes = await uploadInvoice({
+            file,
+            sessionId,
+            transactionId: item.id,
+          });
+
+          const storedName = uploadRes?.stored?.name || file.name;
+          const storedFileId = uploadRes?.stored?.fileId || null; // 可选：你后端 action 支持的话再传
+
+          await runAction({
+            type: "UPLOAD_INVOICE",
+            targetId: item.id,
+            fileName: storedName,
+            ...(storedFileId ? { fileId: storedFileId } : {}),
+          }); 
+          
+        }catch(err){
+          alert(err?.message || String(err));
+        } finally {
+          input.value = "";
         }
       };
       input.click();
@@ -971,7 +1004,7 @@ const BookkeepingSaaS = () => {
 
     // 备注
     const [noteText, setNoteText] = useState(
-      transactionNotes?.[String(match.id)] || ""
+      transactionNotes?.[String(match.id)] || "",
     );
 
     // reasons -> 文案
@@ -988,7 +1021,7 @@ const BookkeepingSaaS = () => {
     };
 
     const reasonMessages = (match.reasons || []).map(
-      (r) => reasonLabels[r] || r
+      (r) => reasonLabels[r] || r,
     );
 
     // 标题行：根据 status 粗略提示
@@ -996,8 +1029,8 @@ const BookkeepingSaaS = () => {
       match.status === "green"
         ? "Match looks good"
         : match.status === "red"
-        ? "Unmatched transaction - review required"
-        : "Partial match found - review required";
+          ? "Unmatched transaction - review required"
+          : "Partial match found - review required";
 
     // UI 渲染
     return (
@@ -1083,7 +1116,7 @@ const BookkeepingSaaS = () => {
                     <span className="text-gray-600">Total Amount:</span>
                     <div className="font-medium">
                       {formatMoney(
-                        hasInvoices ? invoiceTotal : match.totalPaid
+                        hasInvoices ? invoiceTotal : match.totalPaid,
                       )}
                     </div>
                   </div>
@@ -1097,7 +1130,7 @@ const BookkeepingSaaS = () => {
                       {invoiceDetails.length === 0 && "-"}
                       {invoiceDetails.length === 1 &&
                         formatDate(
-                          mainInvoice?.invoiceDate || match.invoiceDate
+                          mainInvoice?.invoiceDate || match.invoiceDate,
                         )}
                       {invoiceDetails.length > 1 &&
                         (() => {
@@ -1107,7 +1140,7 @@ const BookkeepingSaaS = () => {
                           if (!dates.length) return "-";
                           const sorted = [...dates].sort();
                           return `${formatDate(sorted[0])} - ${formatDate(
-                            sorted[sorted.length - 1]
+                            sorted[sorted.length - 1],
                           )}`;
                         })()}
                     </div>
@@ -1167,7 +1200,7 @@ const BookkeepingSaaS = () => {
                           {(inv.vendor || match.vendorName || "-") +
                             " - " +
                             formatMoney(
-                              inv.total ?? inv.subtotal ?? match.totalPaid
+                              inv.total ?? inv.subtotal ?? match.totalPaid,
                             )}
                         </div>
                         <div className="text-gray-500 text-xs">
@@ -1488,12 +1521,12 @@ const BookkeepingSaaS = () => {
                       <p className="text-lg font-semibold text-blue-900">
                         {new Date(selectedPeriod.from).toLocaleDateString(
                           "en-GB",
-                          { day: "numeric", month: "long", year: "numeric" }
+                          { day: "numeric", month: "long", year: "numeric" },
                         )}{" "}
                         -{" "}
                         {new Date(selectedPeriod.to).toLocaleDateString(
                           "en-GB",
-                          { day: "numeric", month: "long", year: "numeric" }
+                          { day: "numeric", month: "long", year: "numeric" },
                         )}
                       </p>
                     </div>
@@ -1518,7 +1551,7 @@ const BookkeepingSaaS = () => {
                                 }));
                               }
                               return next;
-                            })()
+                            })(),
                           )
                         }
                       />
@@ -1754,7 +1787,7 @@ const BookkeepingSaaS = () => {
                           <span className="font-medium">
                             {
                               matchingResults.matches.filter(
-                                (m) => m.status === "green"
+                                (m) => m.status === "green",
                               ).length
                             }
                           </span>
@@ -1764,7 +1797,7 @@ const BookkeepingSaaS = () => {
                           <span className="font-medium">
                             {
                               matchingResults.matches.filter(
-                                (m) => m.status === "yellow"
+                                (m) => m.status === "yellow",
                               ).length
                             }
                           </span>
@@ -1774,7 +1807,7 @@ const BookkeepingSaaS = () => {
                           <span className="font-medium">
                             {
                               matchingResults.matches.filter(
-                                (m) => m.status === "red"
+                                (m) => m.status === "red",
                               ).length
                             }
                           </span>
@@ -1784,13 +1817,13 @@ const BookkeepingSaaS = () => {
                         ~
                         {Math.ceil(
                           matchingResults.matches.filter(
-                            (m) => m.status === "yellow"
+                            (m) => m.status === "yellow",
                           ).length *
                             5 +
                             matchingResults.matches.filter(
-                              (m) => m.status === "red"
+                              (m) => m.status === "red",
                             ).length *
-                              3
+                              3,
                         )}{" "}
                         mins to complete
                       </span>
@@ -1824,12 +1857,12 @@ const BookkeepingSaaS = () => {
                       onClick={nextStep}
                       disabled={
                         !matchingResults.matches.every(
-                          (m) => m.status === "green"
+                          (m) => m.status === "green",
                         )
                       }
                       className={`px-6 py-3 rounded-lg flex items-center gap-2 ${
                         matchingResults.matches.every(
-                          (m) => m.status === "green"
+                          (m) => m.status === "green",
                         )
                           ? "bg-blue-600 text-white hover:bg-blue-700"
                           : "bg-gray-300 text-gray-500 cursor-not-allowed"
@@ -1890,7 +1923,7 @@ const BookkeepingSaaS = () => {
                             <span className="font-medium">
                               {
                                 matchingResults.matches.filter(
-                                  (m) => m.status === "green"
+                                  (m) => m.status === "green",
                                 ).length
                               }
                             </span>
@@ -1900,7 +1933,7 @@ const BookkeepingSaaS = () => {
                             <span className="font-medium">
                               {
                                 matchingResults.matches.filter(
-                                  (m) => m.status === "yellow"
+                                  (m) => m.status === "yellow",
                                 ).length
                               }
                             </span>
@@ -1910,7 +1943,7 @@ const BookkeepingSaaS = () => {
                             <span className="font-medium">
                               {
                                 matchingResults.matches.filter(
-                                  (m) => m.status === "red"
+                                  (m) => m.status === "red",
                                 ).length
                               }
                             </span>
@@ -1920,13 +1953,13 @@ const BookkeepingSaaS = () => {
                           ~
                           {Math.ceil(
                             matchingResults.matches.filter(
-                              (m) => m.status === "yellow"
+                              (m) => m.status === "yellow",
                             ).length *
                               5 +
                               matchingResults.matches.filter(
-                                (m) => m.status === "red"
+                                (m) => m.status === "red",
                               ).length *
-                                3
+                                3,
                           )}{" "}
                           mins to complete
                         </span>
@@ -1968,12 +2001,12 @@ const BookkeepingSaaS = () => {
                         }}
                         disabled={
                           !matchingResults.matches.every(
-                            (m) => m.status === "green"
+                            (m) => m.status === "green",
                           )
                         }
                         className={`px-6 py-2 rounded-lg flex items-center gap-2 ${
                           matchingResults.matches.every(
-                            (m) => m.status === "green"
+                            (m) => m.status === "green",
                           )
                             ? "bg-blue-600 text-white hover:bg-blue-700"
                             : "bg-gray-300 text-gray-500 cursor-not-allowed"
