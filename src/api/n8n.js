@@ -5,6 +5,7 @@ const env = {
   API_KEY: (import.meta.env.VITE_N8N_API_KEY || "").trim(),
   UPLOAD_URL: (import.meta.env.VITE_N8N_UPLOAD_URL || "").trim(),
   UPLOAD_BANK_URL: (import.meta.env.VITE_N8N_BANK_UPLOAD_URL || "").trim(),
+  UPLOAD_FETCH_URL: (import.meta.env.VITE_N8N_UPLOAD_FETCH_URL || "").trim(),
 };
 
 function withAuth(headers = {}) {
@@ -72,7 +73,46 @@ export async function triggerAction(payload) {
   return res.json();
 }
 
-/** 上传单个 invoice（multipart）到 n8n：存储 + OCR +（可选）reconcile one， 暂时没有添加 sessionId 和 transactionId */
+/** 上传多个发票到 Fetch 专用 webhook（multipart） */
+export async function uploadFetchInvoices(files, { sessionId } = {}) {
+  const url = (import.meta.env.VITE_N8N_UPLOAD_FETCH_URL || "").trim();
+  if (!url) throw new Error("Missing VITE_N8N_UPLOAD_FETCH_URL");
+
+  const list = Array.isArray(files) ? files : Array.from(files || []);
+  if (!list.length) throw new Error("No invoice files selected");
+
+  const results = [];
+  for (const file of list) {
+    const fd = new FormData();
+    fd.append("file", file); // ✅ binary key 固定 file
+    if (sessionId) fd.append("sessionId", sessionId);
+
+    const res = await fetch(url, {
+      method: "POST",
+      body: fd,
+      headers: withAuth({ Accept: "application/json" }),
+    });
+
+    const text = await res.text();
+    let data;
+    try {
+      data = text ? JSON.parse(text) : null;
+    } catch {
+      throw new Error(`Fetch upload returned non-JSON: ${text?.slice(0, 200)}`);
+    }
+
+    if (!res.ok)
+      throw new Error(
+        data?.error?.message || `Fetch upload failed ${res.status}`,
+      );
+
+    results.push({ file, data });
+  }
+
+  return results;
+}
+
+/** 在actioncard上传单个 invoice（multipart）到 n8n：存储 + OCR +（可选）reconcile one， 暂时没有添加 sessionId 和 transactionId */
 
 export async function uploadInvoice({ file, sessionId, transactionId }) {
   if (!env.UPLOAD_URL) throw new Error("Missing VITE_N8N_UPLOAD_URL");

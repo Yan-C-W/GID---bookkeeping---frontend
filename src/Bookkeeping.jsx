@@ -26,6 +26,7 @@ import {
   triggerAction,
   uploadInvoice,
   uploadBankStatements,
+  uploadFetchInvoices,
 } from "./api/n8n";
 
 const BookkeepingSaaS = () => {
@@ -66,6 +67,10 @@ const BookkeepingSaaS = () => {
   const [bankUploads, setBankUploads] = useState([]); // 已上传到Drive的记录
   const [bankUploading, setBankUploading] = useState(false);
   const [bankUploadError, setBankUploadError] = useState("");
+
+  const [invoiceUploads, setInvoiceUploads] = useState([]); // 已上传到Drive的记录
+  const [invoiceUploading, setInvoiceUploading] = useState(false);
+  const [invoiceUploadError, setInvoiceUploadError] = useState("");
 
   // ---- helpers: format date & money (DD/MM/YYYY) ----
   const formatDate = (value) => {
@@ -265,7 +270,36 @@ const BookkeepingSaaS = () => {
   // File upload handler
   const handleFileUpload = async (files, type) => {
     if (type === "invoices") {
-      setInvoices(Array.from(files || []));
+      const list = Array.from(files || []);
+      if (!list.length) return;
+
+      setInvoices((prev) => [...prev, ...list]);
+
+      setInvoiceUploadError("");
+      setInvoiceUploading(true);
+
+      try {
+        const results = await uploadFetchInvoices(list, { sessionId });
+
+        const newUploaded = results.map((r) => ({
+          localName: r.file.name,
+          size: r.file.size,
+          type: r.file.type,
+          ...(r.data?.stored || {}),
+          raw: r.data,
+        }));
+
+        setInvoiceUploads((prev) => {
+          const map = new Map(prev.map((x) => [x.localName, x]));
+          for (const item of newUploaded) map.set(item.localName, item);
+          return Array.from(map.values());
+        });
+      } catch (e) {
+        setInvoiceUploadError(e?.message || "Invoice upload failed");
+      } finally {
+        setInvoiceUploading(false);
+      }
+
       return;
     }
 
@@ -618,10 +652,13 @@ const BookkeepingSaaS = () => {
           {type === "bank" && bankStatement && (
             <p className="text-green-600 font-medium">{bankStatement.name}</p>
           )}
-          {type === "invoices" && invoices.length > 0 && (
+          {type === "invoices" && invoiceUploads.length > 0 && (
             <p className="text-green-600 font-medium">
-              {invoices.length} files uploaded
+              {invoiceUploads.length} files uploaded
             </p>
+          )}
+          {type === "invoices" && invoiceUploadError && (
+            <p className="text-red-600 font-medium">{invoiceUploadError}</p>
           )}
         </div>
       </label>
