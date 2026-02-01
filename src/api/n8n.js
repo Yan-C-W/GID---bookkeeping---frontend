@@ -4,6 +4,7 @@ const env = {
   ACTION_URL: (import.meta.env.VITE_N8N_ACTION_URL || "").trim(),
   API_KEY: (import.meta.env.VITE_N8N_API_KEY || "").trim(),
   UPLOAD_URL: (import.meta.env.VITE_N8N_UPLOAD_URL || "").trim(),
+  UPLOAD_BANK_URL: (import.meta.env.VITE_N8N_BANK_UPLOAD_URL || "").trim(),
 };
 
 function withAuth(headers = {}) {
@@ -100,4 +101,43 @@ export async function uploadInvoice({ file, sessionId, transactionId }) {
       data?.error?.message || data?.error || `Upload failed ${res.status}`,
     );
   return data;
+}
+
+/** 上传多个银行对账单（multipart）到 n8n：存储 + OCR */
+
+export async function uploadBankStatements(files, { sessionId } = {}) {
+  const url = (import.meta.env.VITE_N8N_UPLOAD_BANK_URL || "").trim();
+  if (!url) throw new Error("Missing VITE_N8N_UPLOAD_BANK_URL");
+
+  const list = Array.isArray(files) ? files : Array.from(files || []);
+  if (!list.length) throw new Error("No bank statement files selected");
+
+  const results = [];
+  // 串行最稳：避免 n8n/Drive 并发限制 + 保证用户重复上传时顺序可控
+  for (const file of list) {
+    const fd = new FormData();
+    fd.append("file", file); // ✅ binary key 固定为 file（与你 n8n 节点一致）
+    if (sessionId) fd.append("sessionId", sessionId);
+
+    const res = await fetch(url, {
+      method: "POST",
+      body: fd,
+      headers: withAuth({ Accept: "application/json" }),
+    });
+
+    const text = await res.text();
+    let data;
+    try {
+      data = text ? JSON.parse(text) : null;
+    } catch {
+      throw new Error(`Bank upload returned non-JSON: ${text?.slice(0, 200)}`);
+    }
+
+    if (!res.ok)
+      throw new Error(
+        data?.error?.message || `Bank upload failed ${res.status}`,
+      );
+    results.push({ file, data });
+  }
+  return results;
 }

@@ -21,7 +21,12 @@ import {
   Plus,
 } from "lucide-react";
 import * as XLSX from "xlsx";
-import { reconcile, triggerAction, uploadInvoice } from "./api/n8n";
+import {
+  reconcile,
+  triggerAction,
+  uploadInvoice,
+  uploadBankStatements,
+} from "./api/n8n";
 
 const BookkeepingSaaS = () => {
   const [currentStep, setCurrentStep] = useState(1);
@@ -58,6 +63,9 @@ const BookkeepingSaaS = () => {
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [currentPage, setCurrentPage] = useState("main"); // 'main' or 'profile'
   const [emailRequestSent, setEmailRequestSent] = useState(false);
+  const [bankUploads, setBankUploads] = useState([]); // 已上传到Drive的记录
+  const [bankUploading, setBankUploading] = useState(false);
+  const [bankUploadError, setBankUploadError] = useState("");
 
   // ---- helpers: format date & money (DD/MM/YYYY) ----
   const formatDate = (value) => {
@@ -255,11 +263,42 @@ const BookkeepingSaaS = () => {
   }, [showUserMenu]);
 
   // File upload handler
-  const handleFileUpload = (files, type) => {
-    if (type === "bank") {
-      setBankStatement(files[0]);
-    } else if (type === "invoices") {
-      setInvoices(Array.from(files));
+  const handleFileUpload = async (files, type) => {
+    if (type === "invoices") {
+      setInvoices(Array.from(files || []));
+      return;
+    }
+
+    if (type !== "bank") return;
+
+    const list = Array.from(files || []);
+    if (!list.length) return;
+
+    setBankUploadError("");
+    setBankUploading(true);
+
+    try {
+      // ✅ 真实上传到独立 bank webhook
+      const results = await uploadBankStatements(list, { sessionId });
+
+      // ✅ 统一成“可追踪的 uploaded records”，支持多次追加
+      const newUploaded = results.map((r) => ({
+        localName: r.file.name,
+        size: r.file.size,
+        type: r.file.type,
+        ...(r.data?.stored || {}), // 期望包含 fileId/name/overwritten/modifiedTime 等
+        raw: r.data,
+      }));
+
+      setBankUploads((prev) => [...prev, ...newUploaded]);
+
+      // ✅ 兼容你现在 reconcile 仍用 bankStatement(File) 的实现：保留一个“当前选中的 statement”
+      // 我建议：把“最后一次选择的最后一个文件”设为当前 statement（最符合用户预期）
+      setBankStatement(list[list.length - 1]);
+    } catch (e) {
+      setBankUploadError(e?.message || "Bank upload failed");
+    } finally {
+      setBankUploading(false);
     }
   };
 
@@ -387,7 +426,7 @@ const BookkeepingSaaS = () => {
 
   // Step navigation
   const nextStep = () => {
-    if (currentStep === 1 && bankStatement) {
+    if (currentStep === 1 && bankUploads.length > 0 && !bankUploading) {
       // Simulate detecting period from bank statement
       const detectedFrom = new Date(2025, 7, 1); // August 1, 2025
       const detectedTo = new Date(2025, 7, 31); // August 31, 2025
@@ -559,7 +598,10 @@ const BookkeepingSaaS = () => {
         id={`file-${type}`}
         accept={accept}
         multiple={multiple}
-        onChange={(e) => handleFileUpload(e.target.files, type)}
+        onChange={async (e) => {
+          await handleFileUpload(e.target.files, type);
+          e.target.value = "";
+        }}
         className="hidden"
       />
       <label htmlFor={`file-${type}`} className="cursor-pointer">
@@ -834,7 +876,7 @@ const BookkeepingSaaS = () => {
       const input = document.createElement("input");
       input.type = "file";
       input.accept = ".pdf,.jpg,.jpeg,.png";
-      async (e) => {
+      input.onchange = async (e) => {
         const file = e.target.files[0];
         if (!file) return;
 
@@ -1476,18 +1518,27 @@ const BookkeepingSaaS = () => {
               {/* Step 1: Bank Statement Upload */}
               {currentStep === 1 && (
                 <div>
-                  <FileUploadArea type="bank" accept=".pdf,.csv,.xlsx,.xls" />
+                  <FileUploadArea
+                    type="bank"
+                    accept=".pdf,.csv,.xlsx,.xls"
+                    multiple
+                  />
+
                   <div className="mt-6 flex justify-end">
                     <button
                       onClick={nextStep}
-                      disabled={!bankStatement}
+                      disabled={bankUploading || bankUploads.length === 0}
                       className={`px-6 py-3 rounded-lg flex items-center gap-2 transition-all ${
-                        !bankStatement
+                        bankUploading || bankUploads.length === 0
                           ? "bg-gray-100 text-gray-400 cursor-not-allowed"
                           : "bg-blue-600 text-white hover:bg-blue-700"
                       }`}
                     >
-                      {!bankStatement ? (
+                      {bankUploading ? (
+                        <>
+                          Upload to Continue <ArrowRight className="w-4 h-4" />
+                        </>
+                      ) : bankUploads.length === 0 ? (
                         <>
                           Upload to Continue <ArrowRight className="w-4 h-4" />
                         </>
